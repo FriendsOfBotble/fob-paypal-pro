@@ -1,0 +1,14 @@
+{
+    "id": "botble/fob-paypal-pro",
+    "name": "FOB PayPal Pro",
+    "namespace": "Botble\\FobPaypalPro\\",
+    "provider": "Botble\\FobPaypalPro\\Providers\\FobPaypalProServiceProvider",
+    "author": "FriendsOfBotble",
+    "url": "https://friendsofbotble.com",
+    "version": "1.0.0",
+    "description": "PayPal Pro with Smart Buttons and Webhooks",
+    "minimum_core_version": "7.3.0",
+    "require": [
+        "botble/payment"
+    ]
+}

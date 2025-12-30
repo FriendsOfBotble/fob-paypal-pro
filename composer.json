@@ -1,0 +1,8 @@
+{
+    "name": "botble/fob-paypal-pro",
+    "description": "FOB PayPal Pro - Smart Buttons & Webhooks",
+    "type": "package",
+    "require": {
+        "paypal/paypal-checkout-sdk": "^1.0"
+    }
+}
