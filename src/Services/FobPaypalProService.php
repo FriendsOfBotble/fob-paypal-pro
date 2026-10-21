@@ -39,6 +39,10 @@ class FobPaypalProService
 
     protected bool $supportRefundOnline = true;
 
+    protected array $pendingOrderData = [];
+
+    protected ?object $captureResult = null;
+
     public function __construct()
     {
         $this->paymentCurrency = config('plugins.payment.payment.currency');
@@ -194,7 +198,12 @@ class FobPaypalProService
         }
 
         if ($checkoutUrl && $paymentId) {
-            session(['fob_paypal_pro_payment_id' => $paymentId]);
+            session([
+                'fob_paypal_pro_payment_id' => $paymentId,
+                'fob_paypal_pro_order_id' => $this->pendingOrderData['order_id'] ?? [],
+                'fob_paypal_pro_customer_id' => $this->pendingOrderData['customer_id'] ?? null,
+                'fob_paypal_pro_customer_type' => $this->pendingOrderData['customer_type'] ?? null,
+            ]);
 
             return $checkoutUrl;
         }
@@ -212,6 +221,11 @@ class FobPaypalProService
 
         $paymentId = session('fob_paypal_pro_payment_id');
 
+        // PayPal returns the order ID as "token", it must be the order created for this session.
+        if (! $paymentId || $paymentId !== $request->input('token')) {
+            return false;
+        }
+
         try {
             $orderRequest = new OrdersCaptureRequest($paymentId);
             $orderRequest->prefer('return=representation');
@@ -222,7 +236,9 @@ class FobPaypalProService
 
             do_action('payment_after_api_response', FOB_PAYPAL_PRO_METHOD_NAME, (array) $orderRequest, (array) $response);
 
-            if ($response && $response->statusCode == 201 && $response->result->status == 'COMPLETED') {
+            if ($response && $response->statusCode == 201 && $this->isCaptured($response->result)) {
+                $this->captureResult = $response->result;
+
                 return $response->result->status;
             }
         } catch (Exception $exception) {
@@ -358,6 +374,12 @@ class FobPaypalProService
 
         $currency = strtoupper($data['currency']);
 
+        $this->pendingOrderData = [
+            'order_id' => $data['order_id'],
+            'customer_id' => Arr::get($data, 'customer_id'),
+            'customer_type' => Arr::get($data, 'customer_type'),
+        ];
+
         $queryParams = [
             'type' => FOB_PAYPAL_PRO_METHOD_NAME,
             'amount' => $amount,
@@ -387,28 +409,15 @@ class FobPaypalProService
             ->createPayment($description);
     }
 
-    public function afterMakePayment(array $data): ?string
+    public function afterMakePayment(): ?string
     {
-        $status = PaymentStatusEnum::COMPLETED;
+        // Amount, currency and order IDs come from the captured PayPal order and the session,
+        // never from the return URL, which the buyer can edit.
+        if (! $this->captureResult) {
+            return null;
+        }
 
-        $chargeId = session('fob_paypal_pro_payment_id');
-
-        $orderIds = (array) Arr::get($data, 'order_id', []);
-
-        do_action(PAYMENT_ACTION_PAYMENT_PROCESSED, [
-            'amount' => $data['amount'],
-            'currency' => $data['currency'],
-            'charge_id' => $chargeId,
-            'order_id' => $orderIds,
-            'customer_id' => Arr::get($data, 'customer_id'),
-            'customer_type' => Arr::get($data, 'customer_type'),
-            'payment_channel' => FOB_PAYPAL_PRO_METHOD_NAME,
-            'status' => $status,
-        ]);
-
-        session()->forget('fob_paypal_pro_payment_id');
-
-        return $chargeId;
+        return $this->afterMakePaymentFromSmartButtons($this->captureResult);
     }
 
     public function isSupportedDecimals(): bool
@@ -538,7 +547,7 @@ class FobPaypalProService
 
             do_action('payment_after_api_response', FOB_PAYPAL_PRO_METHOD_NAME, (array) $orderRequest, (array) $response);
 
-            if ($response && $response->statusCode == 201 && $response->result->status == 'COMPLETED') {
+            if ($response && $response->statusCode == 201 && $this->isCaptured($response->result)) {
                 return $response->result;
             }
         } catch (Exception $exception) {
@@ -548,20 +557,37 @@ class FobPaypalProService
         return null;
     }
 
+    /**
+     * A COMPLETED order can still hold a declined capture, so check the capture itself. PENDING means PayPal
+     * accepted the payment but hasn't credited the funds yet; the PAYMENT.CAPTURE.COMPLETED webhook finishes it.
+     */
+    protected function isCaptured(object $result): bool
+    {
+        return ($result->status ?? null) === 'COMPLETED'
+            && in_array($this->firstCapture($result)?->status, ['COMPLETED', 'PENDING'], true);
+    }
+
+    protected function firstCapture(object $result): ?object
+    {
+        return $result->purchase_units[0]->payments->captures[0] ?? null;
+    }
+
     public function afterMakePaymentFromSmartButtons(object $captureResult): ?string
     {
         $orderId = $captureResult->id;
-        $purchaseUnit = $captureResult->purchase_units[0] ?? null;
+        $capture = $this->firstCapture($captureResult);
+        // The capture carries the amount actually captured; the purchase unit amount is only a fallback.
+        $amount = $capture?->amount ?? ($captureResult->purchase_units[0]->amount ?? null);
 
         do_action(PAYMENT_ACTION_PAYMENT_PROCESSED, [
-            'amount' => $purchaseUnit?->amount?->value ?? 0,
-            'currency' => $purchaseUnit?->amount?->currency_code ?? 'USD',
+            'amount' => $amount?->value ?? 0,
+            'currency' => $amount?->currency_code ?? 'USD',
             'charge_id' => $orderId,
             'order_id' => session('fob_paypal_pro_order_id', []),
             'customer_id' => session('fob_paypal_pro_customer_id'),
             'customer_type' => session('fob_paypal_pro_customer_type'),
             'payment_channel' => FOB_PAYPAL_PRO_METHOD_NAME,
-            'status' => PaymentStatusEnum::COMPLETED,
+            'status' => $capture?->status === 'PENDING' ? PaymentStatusEnum::PENDING : PaymentStatusEnum::COMPLETED,
         ]);
 
         session()->forget([
