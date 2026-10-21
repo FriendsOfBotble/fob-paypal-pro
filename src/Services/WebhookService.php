@@ -12,8 +12,19 @@ class WebhookService
     {
         $webhookId = setting('payment_fob_paypal_pro_webhook_id');
 
+        // Without a webhook ID the event can't be verified with PayPal, so never trust it.
         if (! $webhookId) {
-            return true;
+            do_action('payment_after_api_response', FOB_PAYPAL_PRO_METHOD_NAME, [
+                'error' => 'Webhook rejected: webhook ID is not configured',
+            ]);
+
+            return false;
+        }
+
+        $webhookEvent = json_decode($request->getContent());
+
+        if (! is_object($webhookEvent)) {
+            return false;
         }
 
         $headers = [
@@ -47,7 +58,7 @@ class WebhookService
                     'transmission_sig' => $headers['transmission_sig'],
                     'transmission_time' => $headers['transmission_time'],
                     'webhook_id' => $webhookId,
-                    'webhook_event' => $request->all(),
+                    'webhook_event' => $webhookEvent,
                 ]);
 
             if ($response->successful()) {

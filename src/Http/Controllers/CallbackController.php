@@ -25,7 +25,7 @@ class CallbackController extends BaseController
                 ->setMessage(trans('plugins/fob-paypal-pro::fob-paypal-pro.payment_failed'));
         }
 
-        $service->afterMakePayment($request->input());
+        $service->afterMakePayment();
 
         return $response
             ->setNextUrl(PaymentHelper::getRedirectURL())
