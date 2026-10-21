@@ -50,16 +50,23 @@ class WebhookService
 
             $baseUrl = $this->getApiBaseUrl();
 
+            $payload = json_encode([
+                'auth_algo' => $headers['auth_algo'],
+                'cert_url' => $headers['cert_url'],
+                'transmission_id' => $headers['transmission_id'],
+                'transmission_sig' => $headers['transmission_sig'],
+                'transmission_time' => $headers['transmission_time'],
+                'webhook_id' => $webhookId,
+                'webhook_event' => '__WEBHOOK_EVENT__',
+            ]);
+
+            // PayPal verifies the signature against the event exactly as it was sent, so splice the
+            // raw body in instead of letting json_encode() re-escape slashes and unicode.
+            $payload = str_replace('"__WEBHOOK_EVENT__"', $request->getContent(), $payload);
+
             $response = Http::withToken($accessToken)
-                ->post("{$baseUrl}/v1/notifications/verify-webhook-signature", [
-                    'auth_algo' => $headers['auth_algo'],
-                    'cert_url' => $headers['cert_url'],
-                    'transmission_id' => $headers['transmission_id'],
-                    'transmission_sig' => $headers['transmission_sig'],
-                    'transmission_time' => $headers['transmission_time'],
-                    'webhook_id' => $webhookId,
-                    'webhook_event' => $webhookEvent,
-                ]);
+                ->withBody($payload, 'application/json')
+                ->post("{$baseUrl}/v1/notifications/verify-webhook-signature");
 
             if ($response->successful()) {
                 return $response->json('verification_status') === 'SUCCESS';

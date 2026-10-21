@@ -7,7 +7,7 @@ return [
     'redirect_message' => 'Complete your payment securely with PayPal.',
     'invalid_order' => 'Invalid order. Please try again.',
     'webhook_id' => 'Webhook ID',
-    'webhook_id_helper' => 'Optional. Enter your PayPal webhook ID to verify webhook signatures.',
+    'webhook_id_helper' => 'Required for webhooks. Enter your PayPal webhook ID; webhook events are rejected until it is set.',
     'webhook_setup' => 'Webhook Setup (Optional)',
 
     'button_layout' => 'Button Layout',
