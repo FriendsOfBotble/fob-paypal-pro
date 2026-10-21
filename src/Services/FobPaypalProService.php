@@ -236,7 +236,7 @@ class FobPaypalProService
 
             do_action('payment_after_api_response', FOB_PAYPAL_PRO_METHOD_NAME, (array) $orderRequest, (array) $response);
 
-            if ($response && $response->statusCode == 201 && $response->result->status == 'COMPLETED') {
+            if ($response && $response->statusCode == 201 && $this->isCaptured($response->result)) {
                 $this->captureResult = $response->result;
 
                 return $response->result->status;
@@ -547,7 +547,7 @@ class FobPaypalProService
 
             do_action('payment_after_api_response', FOB_PAYPAL_PRO_METHOD_NAME, (array) $orderRequest, (array) $response);
 
-            if ($response && $response->statusCode == 201 && $response->result->status == 'COMPLETED') {
+            if ($response && $response->statusCode == 201 && $this->isCaptured($response->result)) {
                 return $response->result;
             }
         } catch (Exception $exception) {
@@ -557,20 +557,37 @@ class FobPaypalProService
         return null;
     }
 
+    /**
+     * A COMPLETED order can still hold a declined capture, so check the capture itself. PENDING means PayPal
+     * accepted the payment but hasn't credited the funds yet; the PAYMENT.CAPTURE.COMPLETED webhook finishes it.
+     */
+    protected function isCaptured(object $result): bool
+    {
+        return ($result->status ?? null) === 'COMPLETED'
+            && in_array($this->firstCapture($result)?->status, ['COMPLETED', 'PENDING'], true);
+    }
+
+    protected function firstCapture(object $result): ?object
+    {
+        return $result->purchase_units[0]->payments->captures[0] ?? null;
+    }
+
     public function afterMakePaymentFromSmartButtons(object $captureResult): ?string
     {
         $orderId = $captureResult->id;
-        $purchaseUnit = $captureResult->purchase_units[0] ?? null;
+        $capture = $this->firstCapture($captureResult);
+        // The capture carries the amount actually captured; the purchase unit amount is only a fallback.
+        $amount = $capture?->amount ?? ($captureResult->purchase_units[0]->amount ?? null);
 
         do_action(PAYMENT_ACTION_PAYMENT_PROCESSED, [
-            'amount' => $purchaseUnit?->amount?->value ?? 0,
-            'currency' => $purchaseUnit?->amount?->currency_code ?? 'USD',
+            'amount' => $amount?->value ?? 0,
+            'currency' => $amount?->currency_code ?? 'USD',
             'charge_id' => $orderId,
             'order_id' => session('fob_paypal_pro_order_id', []),
             'customer_id' => session('fob_paypal_pro_customer_id'),
             'customer_type' => session('fob_paypal_pro_customer_type'),
             'payment_channel' => FOB_PAYPAL_PRO_METHOD_NAME,
-            'status' => PaymentStatusEnum::COMPLETED,
+            'status' => $capture?->status === 'PENDING' ? PaymentStatusEnum::PENDING : PaymentStatusEnum::COMPLETED,
         ]);
 
         session()->forget([
